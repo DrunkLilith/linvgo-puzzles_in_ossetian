@@ -3,8 +3,11 @@ import os
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 from data._all_models import db, User, Riddle
+from utils.add_points import add_points
+from utils.get_user_id import get_user_id
 
 DATABASE_PATH = os.path.abspath("db/puzzles.db")
+
 
 # Создание экземпляра приложения
 def main():
@@ -19,6 +22,7 @@ def main():
     db.init_app(app)
 
     return app
+
 
 app = main()
 
@@ -117,9 +121,15 @@ def login():
     #  ввод логина, пароля
 
     if request.method == "POST":
-        username = request.form["username"]
+        email = request.form["email"]
         password = request.form["password"]
-        user = User.query.filter_by(name=username, password=password).first()
+        user = User.query.filter_by(name=email, password=password).first()
+
+        try:
+            user_id = get_user_id()
+        except:
+            print("Обработка ошибок!")
+
         # если введены верные данные
         if user:
             session["username"] = user.name
@@ -276,8 +286,14 @@ def rating():
 # при решении всех ребусов
 @app.route("/success")
 def success():
-    if "username" in session and session["username"] != "Guest":
+    if "username" in session and session["username"] != "Guest" or "user_id" in session:
         # Если пользователь авторизован, показываем стандартное сообщение
+
+        try:
+            add_points(session.get("score") // 20)
+        except:
+            print("Обработка ошибок!")
+
         return render_template("success.html")
     else:
         # Если пользователь - гость, предлагаем зарегистрироваться
