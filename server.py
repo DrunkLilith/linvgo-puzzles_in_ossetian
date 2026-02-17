@@ -126,13 +126,14 @@ def login():
         user = User.query.filter_by(name=email, password=password).first()
 
         try:
-            user_id = get_user_id()
-        except:
-            print("Обработка ошибок!")
+            user_id = get_user_id(email, password)
+            return redirect(url_for("game"))
+        except Exception as e:
+            print("Обработка ошибок!", e)
 
         # если введены верные данные
         if user:
-            session["username"] = user.name
+            session["username"] = user_id
             session["score"] = user.score
             session["solved_rebuses"] = (
                 user.solved_rebuses.split(",") if user.solved_rebuses else []
