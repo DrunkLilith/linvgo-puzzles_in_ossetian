@@ -15,6 +15,9 @@
         </div>
     {% else %}
         <p>Ваш прогресс сохранен. Спасибо за игру!</p>
+        {% if total is not none %}
+            <p>Ваш общий счёт на портале: {{ total }}</p>
+        {% endif %}
         <a href="{{ url_for('index') }}" class="btn btn-primary">Вернуться на главную</a>
     {% endif %}
 </div>

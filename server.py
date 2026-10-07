@@ -3,8 +3,7 @@ import os
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 from data._all_models import db, User, Riddle
-from utils.add_points import add_points
-from utils.get_user_id import get_user_id
+from utils import api
 
 DATABASE_PATH = os.path.abspath("db/puzzles.db")
 
@@ -12,7 +11,7 @@ DATABASE_PATH = os.path.abspath("db/puzzles.db")
 # Создание экземпляра приложения
 def main():
     app = Flask(__name__)
-    app.secret_key = "your_secret_key"  # Ключ для работы с сессиями
+    app.secret_key = os.environ.get("SECRET_KEY", "your_secret_key")  # Ключ для работы с сессиями
 
     # Настройка пути к базе данных
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
@@ -26,8 +25,6 @@ def main():
 
 app = main()
 
-
-# Буквы осетинского алфавита
 ossetian_alphabet = [
     "а",
     "æ",
@@ -106,6 +103,10 @@ with app.app_context():
 # главная страница
 @app.route("/")
 def index():
+    # игровая сессия портала: iframe передаёт ?session=<id>
+    if "game_session_id" not in session:
+        session["game_session_id"] = None
+    api.get_game_session_id()
     return render_template("index.html")
 
 
@@ -115,71 +116,34 @@ def rules():
     return render_template("rules.html")
 
 
-# войти
+# войти (через API портала Рудзынг.рф)
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    #  ввод логина, пароля
-
     if request.method == "POST":
-        email = request.form["email"]
-        password = request.form["password"]
-        user = User.query.filter_by(name=email, password=password).first()
+        email = request.form.get("email", "")
+        password = request.form.get("password", "")
 
         try:
-            user_id = get_user_id(email, password)
+            user_id = api.login(email, password)
+            # имя для отображения и локального рейтинга
+            session["username"] = email
+            session.pop("score", None)
+            session.pop("solved_rebuses", None)
             return redirect(url_for("game"))
-        except Exception as e:
-            print("Обработка ошибок!", e)
-
-        # если введены верные данные
-        if user:
-            session["username"] = user_id
-            session["score"] = user.score
-            session["solved_rebuses"] = (
-                user.solved_rebuses.split(",") if user.solved_rebuses else []
-            )
-            return redirect(url_for("game"))
-        else:
-            flash("Неверное имя пользователя или пароль.", "danger")
+        except api.ApiError as e:
+            flash(str(e), "danger")
     return render_template("login.html")
 
 
-# зарегистрироваться
+# зарегистрироваться (на портале)
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-        # если уже существует
-        if User.query.filter_by(name=username).first():
-            flash("Имя пользователя уже занято.", "danger")
-        # создание новой сессии для пользователя
-        # сохранение сессии
-        else:
-            new_user = User(
-                name=username,
-                password=password,
-                score=session.get("score", 0),
-                solved_rebuses=",".join(session.get("solved_rebuses", [])),
-            )
-            db.session.add(new_user)
-            db.session.commit()
-            session["username"] = username
-            return redirect(url_for("game"))
-    return render_template("register.html")
+    return redirect("https://рудзынг.рф/register")
 
 
 # выйти
 @app.route("/logout")
 def logout():
-    # если пользователь зарегистрирован, прогресс сохраняется
-    # у гостя сессия очищается
-    if "username" in session and session["username"] != "Guest":
-        user = User.query.filter_by(name=session["username"]).first()
-        if user:
-            user.score = session["score"]
-            user.solved_rebuses = ",".join(session.get("solved_rebuses", []))
-            db.session.commit()
     session.clear()
     return redirect(url_for("index"))
 
@@ -195,14 +159,6 @@ def game():
         session["current_rebus_id"] = session.get(
             "current_rebus_id", 1
         )  # Инициализация текущего ID ребуса
-    else:
-        user = User.query.filter_by(name=session["username"]).first()
-        if user:
-            session["score"] = user.score
-            session["solved_rebuses"] = (
-                user.solved_rebuses.split(",") if user.solved_rebuses else []
-            )
-            session["current_rebus_id"] = session.get("current_rebus_id", 1)
 
     # Получаем текущий ID ребуса из параметров запроса или сессии
     current_rebus_id = int(request.args.get("rebus_id", session["current_rebus_id"]))
@@ -239,13 +195,12 @@ def game():
                     new_score = min(session["score"] + 20, 100)
                     session["score"] = new_score
                     session["solved_rebuses"].append(str(current_rebus_id))
-                    # Обновляем данные в БД только для авторизованных пользователей
-                    if session["username"] != "Guest":
-                        user = User.query.filter_by(name=session["username"]).first()
-                        if user:
-                            user.score = new_score
-                            user.solved_rebuses = ",".join(session["solved_rebuses"])
-                            db.session.commit()
+                    # Баллы начисляются на портале через игровую сессию
+                    if session.get("game_session_id"):
+                        try:
+                            api.add_points(20)
+                        except api.ApiError as e:
+                            print(f"Не удалось начислить баллы: {e}")
                     flash("Правильно!", "success")
                 current_rebus_id += 1
                 session["current_rebus_id"] = current_rebus_id
@@ -287,18 +242,19 @@ def rating():
 # при решении всех ребусов
 @app.route("/success")
 def success():
-    if "username" in session and session["username"] != "Guest" or "user_id" in session:
-        # Если пользователь авторизован, показываем стандартное сообщение
-
-        try:
-            add_points(session.get("score") // 20)
-        except:
-            print("Обработка ошибок!")
-
-        return render_template("success.html")
-    else:
-        # Если пользователь - гость, предлагаем зарегистрироваться
+    # если гость — предлагаем зарегистрироваться на портале
+    if "user_id" not in session and session.get("username") == "Guest":
         return render_template("success.html", show_register_prompt=True)
+
+    # итоговые баллы уже начислены по каждому решённому ребусу;
+    # показываем общий счёт портала, если сессия доступна
+    total = session.get("score")
+    if session.get("game_session_id"):
+        try:
+            total = api.get_points()
+        except api.ApiError as e:
+            print(f"Не удалось получить счёт: {e}")
+    return render_template("success.html", total=total)
 
 
 @app.route("/register_prompt/<int:rebus_id>", methods=["GET", "POST"])
@@ -315,4 +271,4 @@ def register_prompt(rebus_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
