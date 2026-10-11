@@ -102,11 +102,29 @@ with app.app_context():
 # Маршруты
 # главная страница
 @app.route("/")
+@app.route("/start")
 def index():
     # игровая сессия портала: iframe передаёт ?session=<id>
     if "game_session_id" not in session:
         session["game_session_id"] = None
+    previous_session_id = session.get("game_session_id")
     api.get_game_session_id()
+
+    # Новый запуск из портала получает новый одноразовый session id. Flask-cookie
+    # при этом может сохраниться от прошлой игры, поэтому начинаем прохождение
+    # заново и разрешаем одно новое итоговое начисление.
+    if (
+        session.get("game_session_id")
+        and session.get("game_session_id") != previous_session_id
+    ):
+        session["score"] = 0
+        session["solved_rebuses"] = []
+        session["current_rebus_id"] = 1
+        session.pop("portal_score_submitted", None)
+        session.pop("portal_total_points", None)
+        for key in list(session):
+            if key.startswith("hints_left_"):
+                session.pop(key, None)
     return render_template("index.html")
 
 
@@ -195,12 +213,6 @@ def game():
                     new_score = min(session["score"] + 20, 100)
                     session["score"] = new_score
                     session["solved_rebuses"].append(str(current_rebus_id))
-                    # Баллы начисляются на портале через игровую сессию
-                    if session.get("game_session_id"):
-                        try:
-                            api.add_points(20)
-                        except api.ApiError as e:
-                            print(f"Не удалось начислить баллы: {e}")
                     flash("Правильно!", "success")
                 current_rebus_id += 1
                 session["current_rebus_id"] = current_rebus_id
@@ -242,18 +254,28 @@ def rating():
 # при решении всех ребусов
 @app.route("/success")
 def success():
-    # если гость — предлагаем зарегистрироваться на портале
-    if "user_id" not in session and session.get("username") == "Guest":
+    # API принимает ровно одно начисление на игровую сессию. Поэтому отправляем
+    # накопленный результат только после прохождения всех загадок, а не после
+    # каждой из них. Флаг защищает от повторной отправки при обновлении страницы.
+    total = session.get("score")
+    if (
+        session.get("game_session_id")
+        and total
+        and not session.get("portal_score_submitted")
+    ):
+        try:
+            total = api.add_points(int(total))
+            session["portal_score_submitted"] = True
+            session["portal_total_points"] = total
+        except api.ApiError as e:
+            print(f"Не удалось начислить итоговые баллы: {e}")
+    elif session.get("portal_total_points") is not None:
+        total = session["portal_total_points"]
+
+    # если игра открыта вне портала гостем — предлагаем зарегистрироваться
+    if "user_id" not in session and not session.get("game_session_id"):
         return render_template("success.html", show_register_prompt=True)
 
-    # итоговые баллы уже начислены по каждому решённому ребусу;
-    # показываем общий счёт портала, если сессия доступна
-    total = session.get("score")
-    if session.get("game_session_id"):
-        try:
-            total = api.get_points()
-        except api.ApiError as e:
-            print(f"Не удалось получить счёт: {e}")
     return render_template("success.html", total=total)
 
 
