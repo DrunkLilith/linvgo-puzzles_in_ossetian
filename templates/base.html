@@ -13,7 +13,9 @@
     <nav class="navbar navbar-expand-lg navbar-light bg-light">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('index') }}">Ребусы на осетинском</a>
-            {% if 'username' in session %}
+            {% if session.get('portal_user_name') %}
+                <span class="navbar-text">{{ session['portal_user_name'] }}</span>
+            {% elif 'username' in session %}
                 <span class="navbar-text">Привет, {{ session['username'] }}!</span>
                 <a href="{{ url_for('logout') }}" class="btn btn-outline-danger ms-3">Выйти</a>
             {% endif %}

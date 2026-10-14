@@ -6,8 +6,14 @@
     <h1 class="display-1 text-primary animate__animated animate__fadeIn">Ребусы на осетинском</h1>
     <div class="d-grid gap-3 col-md-6 mx-auto">
         <a href="{{ url_for('rules') }}" class="btn btn-primary">Правила игры</a>
+        {% if session.get('portal_user_name') %}
+        <div class="alert alert-success mb-0" role="status">
+            Игра запущена для {{ session['portal_user_name'] }}
+        </div>
+        {% else %}
         <a href="{{ url_for('login') }}" class="btn btn-primary">Войти</a>
         <a href="{{ url_for('register') }}" class="btn btn-primary">Зарегистрироваться</a>
+        {% endif %}
         <a href="{{ url_for('game') }}" class="btn btn-primary">Играть</a>
         <a href="{{ url_for('rating') }}" class="btn btn-primary">Рейтинг игроков</a>
     </div>

@@ -35,6 +35,8 @@ def main():
 
 app = main()
 
+PORTAL_URL = os.environ.get("PORTAL_URL", "http://localhost:5086").rstrip("/")
+
 ossetian_alphabet = [
     "а",
     "æ",
@@ -114,11 +116,15 @@ with app.app_context():
 @app.route("/")
 @app.route("/start")
 def index():
-    # игровая сессия портала: iframe передаёт ?session=<id>
-    if "game_session_id" not in session:
-        session["game_session_id"] = None
     previous_session_id = session.get("game_session_id")
-    api.get_game_session_id()
+    try:
+        portal_session = api.get_game_session()
+    except api.ApiError as exc:
+        return f"Игровая сессия отклонена: {exc}", 401
+
+    if portal_session:
+        session["user_id"] = portal_session["userId"]
+        session["username"] = portal_session.get("userName") or "Игрок"
 
     # Новый запуск из портала получает новый одноразовый session id. Flask-cookie
     # при этом может сохраниться от прошлой игры, поэтому начинаем прохождение
@@ -145,29 +151,15 @@ def rules():
 
 
 # войти (через API портала Рудзынг.рф)
-@app.route("/login", methods=["GET", "POST"])
+@app.route("/login")
 def login():
-    if request.method == "POST":
-        email = request.form.get("email", "")
-        password = request.form.get("password", "")
-
-        try:
-            user_id = api.login(email, password)
-            # имя для отображения и локального рейтинга
-            session["username"] = email
-            session.pop("score", None)
-            session.pop("solved_rebuses", None)
-            return redirect(url_for("game"))
-        except api.ApiError as e:
-            flash(str(e), "danger")
-    return render_template("login.html")
+    return redirect(f"{PORTAL_URL}/Account/Login")
 
 
 # зарегистрироваться (на портале)
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    portal_url = os.environ.get("PORTAL_URL", "https://рудзынг.рф").rstrip("/")
-    return redirect(f"{portal_url}/Account/Register")
+    return redirect(f"{PORTAL_URL}/Account/Register")
 
 
 # выйти
@@ -182,7 +174,7 @@ def logout():
 def game():
     # Инициализация данных для гостя или загрузка данных пользователя
     if "username" not in session:
-        session["username"] = "Guest"
+        session["username"] = "Гость"
         session["score"] = session.get("score", 0)
         session["solved_rebuses"] = session.get("solved_rebuses", [])
         session["current_rebus_id"] = session.get(
