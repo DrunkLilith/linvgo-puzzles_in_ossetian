@@ -1,6 +1,7 @@
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from data._all_models import db, User, Riddle
 from utils import api
@@ -12,6 +13,15 @@ DATABASE_PATH = os.path.abspath("db/puzzles.db")
 def main():
     app = Flask(__name__)
     app.secret_key = os.environ.get("SECRET_KEY", "your_secret_key")  # Ключ для работы с сессиями
+    path_base = os.environ.get("GAME_PATH_BASE", "").rstrip("/")
+    app.config["APPLICATION_ROOT"] = path_base or "/"
+    app.config["SESSION_COOKIE_PATH"] = path_base or "/"
+    app.config["SESSION_COOKIE_NAME"] = os.environ.get(
+        "GAME_COOKIE_NAME", "lingvogameos_puzzles_session"
+    )
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
+    )
 
     # Настройка пути к базе данных
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
@@ -156,7 +166,8 @@ def login():
 # зарегистрироваться (на портале)
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    return redirect("https://рудзынг.рф/register")
+    portal_url = os.environ.get("PORTAL_URL", "https://рудзынг.рф").rstrip("/")
+    return redirect(f"{portal_url}/Account/Register")
 
 
 # выйти
